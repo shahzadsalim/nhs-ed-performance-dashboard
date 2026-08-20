@@ -1,0 +1,42 @@
+name: Update NHS ED dashboard data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 13 * *"
+    - cron: "17 8 16 * *"
+    - cron: "17 8 20 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download and process NHS England data
+        run: python scripts/update_data.py
+
+      - name: Commit refreshed dashboard data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard.json
+          if git diff --cached --quiet; then
+            echo "Dashboard data are already current."
+          else
+            git commit -m "Update NHS ED dashboard data"
+            git push
+          fi
