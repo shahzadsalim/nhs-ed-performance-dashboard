@@ -1,8 +1,24 @@
 const DATA_URL = "dashboard.json";
 
-const state = { data: null, view: "trusts", search: "", region: "", visibleRows: [] };
+const state = {
+  data: null,
+  view: "trusts",
+  search: "",
+  region: "",
+  visibleRows: [],
+  comparisonMetric: "type1_within4_pct",
+  comparisonTrusts: ["", "", ""],
+};
 const fmtInt = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
 const fmtCompact = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 });
+const comparisonColours = ["#005eb8", "#d5281b", "#6f42c1", "#00856a"];
+const comparisonMetrics = {
+  type1_within4_pct: { label: "Type 1 within four hours", format: pct, percent: true },
+  utc_within4_pct: { label: "UTC / Other A&E within four hours", format: pct, percent: true },
+  provider_combined_within4_pct: { label: "Provider combined within four hours", format: pct, percent: true },
+  type1_attendances: { label: "Type 1 attendances", format: integer, percent: false },
+  utc_attendances: { label: "UTC / Other A&E attendances", format: integer, percent: false },
+};
 
 function pct(value) {
   return value === null || value === undefined ? "—" : `${Number(value).toFixed(1)}%`;
@@ -187,6 +203,127 @@ function utcSiteView() {
   </table>`;
 }
 
+function comparisonProviderOptions(selectedCode) {
+  return state.data.providers
+    .filter((provider) => state.data.provider_trends[provider.code]?.length)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((provider) => `<option value="${safe(provider.code)}" ${provider.code === selectedCode ? "selected" : ""}>${safe(provider.name)}</option>`)
+    .join("");
+}
+
+function comparisonChart(series, periods, metricKey) {
+  const metricDefinition = comparisonMetrics[metricKey];
+  const width = 960;
+  const height = 350;
+  const pad = { top: 22, right: 24, bottom: 48, left: 66 };
+  const allValues = series.flatMap((item) => item.points)
+    .map((point) => point[metricKey])
+    .filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)))
+    .map(Number);
+  if (!allValues.length) return '<p class="comparison-empty">No comparable data are available for this selection.</p>';
+
+  const min = 0;
+  const max = metricDefinition.percent ? 100 : Math.max(...allValues) * 1.1;
+  const x = (period) => {
+    const index = periods.indexOf(period);
+    return pad.left + (index * (width - pad.left - pad.right)) / Math.max(periods.length - 1, 1);
+  };
+  const y = (value) => pad.top + ((max - value) * (height - pad.top - pad.bottom)) / Math.max(max - min, 1);
+  const yTicks = Array.from({ length: 5 }, (_, index) => min + ((max - min) * index) / 4);
+  const xIndexes = periods.map((_, index) => index).filter((index) => index % 2 === 0 || index === periods.length - 1);
+  const axisLabel = metricDefinition.percent
+    ? (value) => `${Math.round(value)}%`
+    : (value) => fmtCompact.format(value);
+
+  const paths = series.map((item, seriesIndex) => {
+    const valid = item.points.filter((point) => (
+      periods.includes(point.period)
+      && point[metricKey] !== null
+      && point[metricKey] !== undefined
+      && Number.isFinite(Number(point[metricKey]))
+    ));
+    const path = valid.map((point, index) => `${index ? "L" : "M"}${x(point.period)},${y(Number(point[metricKey]))}`).join(" ");
+    const colour = comparisonColours[seriesIndex % comparisonColours.length];
+    return `
+      <path class="comparison-line" stroke="${colour}" d="${path}" />
+      ${valid.map((point) => `<circle class="comparison-dot" fill="${colour}" cx="${x(point.period)}" cy="${y(Number(point[metricKey]))}" r="4" tabindex="0"><title>${safe(item.name)} — ${monthLabel(point.period)}: ${metricDefinition.format(point[metricKey])}</title></circle>`).join("")}`;
+  }).join("");
+
+  return `<div class="comparison-chart-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${safe(metricDefinition.label)} comparison over 12 months">
+    ${yTicks.map((tick) => `<line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y(tick)}" y2="${y(tick)}" />`).join("")}
+    ${yTicks.map((tick) => `<text class="axis-text" x="${pad.left - 9}" y="${y(tick) + 4}" text-anchor="end">${safe(axisLabel(tick))}</text>`).join("")}
+    ${xIndexes.map((index) => `<text class="axis-text" x="${x(periods[index])}" y="${height - 14}" text-anchor="middle">${safe(monthLabel(periods[index], true))}</text>`).join("")}
+    ${paths}
+  </svg></div>`;
+}
+
+function comparisonView() {
+  const periods = state.data.national_trend.slice(-12).map((point) => point.period);
+  const metricDefinition = comparisonMetrics[state.comparisonMetric];
+  const selectedCodes = [...new Set(state.comparisonTrusts.filter(Boolean))];
+  const providerByCode = Object.fromEntries(state.data.providers.map((provider) => [provider.code, provider]));
+  const series = [
+    { name: "England", points: state.data.national_trend.filter((point) => periods.includes(point.period)) },
+    ...selectedCodes.map((code) => ({
+      name: providerByCode[code]?.name || code,
+      points: (state.data.provider_trends[code] || []).filter((point) => periods.includes(point.period)),
+    })),
+  ];
+
+  state.visibleRows = periods.map((period) => {
+    const row = { Month: monthLabel(period) };
+    series.forEach((item) => {
+      const point = item.points.find((candidate) => candidate.period === period);
+      row[item.name] = metricDefinition.format(point?.[state.comparisonMetric]);
+    });
+    return row;
+  });
+
+  const tableHeaders = ["Month", ...series.map((item) => item.name)];
+  const selectors = state.comparisonTrusts.map((code, index) => `
+    <label><span>Trust ${index + 1}</span><select class="comparison-trust" data-slot="${index}">
+      <option value="">Select a trust</option>
+      ${comparisonProviderOptions(code)}
+    </select></label>`).join("");
+  const metricOptions = Object.entries(comparisonMetrics).map(([key, definition]) => (
+    `<option value="${key}" ${key === state.comparisonMetric ? "selected" : ""}>${safe(definition.label)}</option>`
+  )).join("");
+
+  return `<div class="comparison-view">
+    <div class="comparison-intro">
+      <div><p class="section-kicker">Historical performance</p><h3>Compare monthly trust results</h3></div>
+      <p>Choose up to three trusts. England is retained as a reference. The most recent 12 published months are shown.</p>
+    </div>
+    <div class="comparison-controls">
+      <label><span>Measure</span><select id="comparisonMetric">${metricOptions}</select></label>
+      ${selectors}
+    </div>
+    <div class="comparison-legend">
+      ${series.map((item, index) => `<span><i style="background:${comparisonColours[index % comparisonColours.length]}"></i>${safe(item.name)}</span>`).join("")}
+    </div>
+    <div class="comparison-chart">${comparisonChart(series, periods, state.comparisonMetric)}</div>
+    ${selectedCodes.length ? "" : '<p class="comparison-hint">Select a trust above to add it to the England trend.</p>'}
+    <div class="comparison-table-wrap"><table class="comparison-table">
+      <thead><tr>${tableHeaders.map((heading) => `<th>${safe(heading)}</th>`).join("")}</tr></thead>
+      <tbody>${state.visibleRows.map((row) => `<tr>${tableHeaders.map((heading) => `<td>${safe(row[heading])}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>
+    <p class="comparison-note">Provider-reported Type 1, UTC and combined measures are shown consistently across the selected period. The official acute trust-footprint methodology changed from April 2026 and is therefore not used in this historical comparison.</p>
+  </div>`;
+}
+
+function bindComparisonControls() {
+  document.getElementById("comparisonMetric").addEventListener("change", (event) => {
+    state.comparisonMetric = event.target.value;
+    renderExplorer();
+  });
+  document.querySelectorAll(".comparison-trust").forEach((select) => {
+    select.addEventListener("change", (event) => {
+      state.comparisonTrusts[Number(event.target.dataset.slot)] = event.target.value;
+      renderExplorer();
+    });
+  });
+}
+
 function notesView() {
   const { definitions, sources } = state.data;
   state.visibleRows = [];
@@ -215,8 +352,19 @@ function renderExplorer() {
     document.getElementById("downloadButton").hidden = true;
     return;
   }
+  if (state.view === "trends") {
+    controls.hidden = true;
+    table.hidden = false;
+    table.classList.add("comparison-mode");
+    notes.hidden = true;
+    document.getElementById("downloadButton").hidden = false;
+    table.innerHTML = comparisonView();
+    bindComparisonControls();
+    return;
+  }
   controls.hidden = false;
   table.hidden = false;
+  table.classList.remove("comparison-mode");
   notes.hidden = true;
   document.getElementById("downloadButton").hidden = false;
   table.innerHTML = state.view === "trusts" ? trustView() : state.view === "eds" ? edSiteView() : utcSiteView();
