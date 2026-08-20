@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Independent dashboard separating Type 1 Emergency Department, urgent-care and combined acute-footprint performance across England." />
+    <title>England ED Performance Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="shell header-inner">
+        <div>
+          <p class="eyebrow">Independent analysis of NHS England public data</p>
+          <h1>Emergency Department Performance Dashboard</h1>
+          <p class="lede">Type 1 ED, urgent-care and combined trust-footprint results are shown separately for fairer comparison.</p>
+        </div>
+        <button id="themeToggle" class="theme-button" type="button" aria-label="Toggle colour theme">Dark mode</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="metadata" aria-label="Dashboard metadata">
+        <span>Data period <strong id="periodLabel">Loading…</strong></span>
+        <span>Updated <strong id="updatedLabel">—</strong></span>
+        <span class="independent-note">Not an official NHS product</span>
+      </section>
+
+      <div id="errorBanner" class="error-banner" hidden></div>
+
+      <section class="kpi-grid" aria-label="England headline measures">
+        <article class="kpi-card">
+          <span class="kpi-label">Type 1 within four hours</span>
+          <strong class="kpi-value" id="kpiType1Performance">—</strong>
+          <span class="kpi-note">Major ED activity only</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">Type 1 attendances</span>
+          <strong class="kpi-value" id="kpiType1Attendances">—</strong>
+          <span class="kpi-note">Booked and unbooked</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">UTC / other attendances</span>
+          <strong class="kpi-value" id="kpiUtcAttendances">—</strong>
+          <span class="kpi-note">Reported as Other A&E</span>
+        </article>
+        <article class="kpi-card">
+          <span class="kpi-label">12+ hours after decision to admit</span>
+          <strong class="kpi-value" id="kpiDta12">—</strong>
+          <span class="kpi-note">Trust/provider aggregate</span>
+        </article>
+      </section>
+
+      <section class="panel trend-panel">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">England trend</p>
+            <h2>Major ED performance and demand</h2>
+          </div>
+          <p>Hover or focus on a point for the monthly value.</p>
+        </div>
+        <div class="chart-grid">
+          <figure>
+            <figcaption>Type 1 attendances within four hours</figcaption>
+            <div id="performanceChart" class="chart" aria-label="Type 1 four-hour performance trend"></div>
+          </figure>
+          <figure>
+            <figcaption>Type 1 attendances</figcaption>
+            <div id="attendanceChart" class="chart" aria-label="Type 1 attendance trend"></div>
+          </figure>
+        </div>
+      </section>
+
+      <section class="explorer-section">
+        <div class="section-heading explorer-heading">
+          <div>
+            <p class="section-kicker">Compare services</p>
+            <h2>England provider and hospital-site explorer</h2>
+          </div>
+          <button id="downloadButton" class="secondary-button" type="button">Download visible table</button>
+        </div>
+
+        <nav class="tabs" aria-label="Dashboard views">
+          <button class="tab-button active" type="button" data-view="trusts">Trust breakdown</button>
+          <button class="tab-button" type="button" data-view="eds">ED sites</button>
+          <button class="tab-button" type="button" data-view="utcs">Urgent-care sites</button>
+          <button class="tab-button" type="button" data-view="notes">Definitions & limitations</button>
+        </nav>
+
+        <div id="tableControls" class="controls">
+          <label><span>Search</span><input id="searchInput" type="search" placeholder="Trust, hospital or code" /></label>
+          <label>
+            <span>NHS region</span>
+            <select id="regionSelect"><option value="">All regions</option></select>
+          </label>
+          <span id="resultCount" class="result-count"></span>
+        </div>
+
+        <div id="tableContainer" class="table-container" tabindex="0"></div>
+        <div id="notesContainer" class="notes-grid" hidden></div>
+      </section>
+
+      <section class="method-banner">
+        <strong>Why the separation matters</strong>
+        <p>A trust-footprint result can include high-performing UTC activity. It should not be interpreted as the performance of the Type 1 major ED alone. Use the Trust breakdown view to compare the measures side by side.</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <p>Created by Shahzad Salim. Contains public-sector information licensed under the Open Government Licence v3.0.</p>
+        <a id="sourceLink" href="https://www.england.nhs.uk/statistics/statistical-work-areas/ae-waiting-times-and-activity/" target="_blank" rel="noreferrer">NHS England source</a>
+      </div>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
