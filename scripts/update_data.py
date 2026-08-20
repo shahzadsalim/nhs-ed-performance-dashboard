@@ -118,12 +118,12 @@ def page_links(client: object, url: str) -> list[tuple[str, str]]:
 
 def collect_publication_links(
     client: object,
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, object]]:
     now = datetime.now(timezone.utc)
     current_start = now.year if now.month >= 4 else now.year - 1
     annual_pages = [financial_year_url(current_start), financial_year_url(current_start - 1)]
     monthly: dict[str, str] = {}
-    latest_assets: dict[str, tuple[str, str]] = {}
+    ecds_monthly: dict[str, dict[str, str]] = defaultdict(dict)
 
     for page_index, page_url in enumerate(annual_pages):
         try:
@@ -141,15 +141,11 @@ def collect_publication_links(
                 and href.lower().split("?")[0].endswith(".csv")
             ):
                 monthly.setdefault(period, href)
-            if page_index == 0 and period:
+            if period:
                 if "ecds activity" in lowered and href.lower().endswith(".xlsx"):
-                    current = latest_assets.get("ecds_activity")
-                    if current is None or period > current[0]:
-                        latest_assets["ecds_activity"] = (period, href)
+                    ecds_monthly[period].setdefault("activity", href)
                 if "ecds performance" in lowered and href.lower().endswith(".xlsx"):
-                    current = latest_assets.get("ecds_performance")
-                    if current is None or period > current[0]:
-                        latest_assets["ecds_performance"] = (period, href)
+                    ecds_monthly[period].setdefault("performance", href)
 
     if not monthly:
         raise RuntimeError("No monthly A&E CSV publication links were found.")
@@ -170,7 +166,18 @@ def collect_publication_links(
         print(f"Warning: could not read {ACUTE_TABLE_PAGE}: {exc}", file=sys.stderr)
 
     selected_months = sorted(monthly)[-15:]
-    assets = {key: value[1] for key, value in latest_assets.items()}
+    complete_ecds = {
+        period: pair for period, pair in ecds_monthly.items()
+        if pair.get("activity") and pair.get("performance")
+    }
+    selected_ecds = {
+        period: complete_ecds[period] for period in sorted(complete_ecds)[-12:]
+    }
+    assets: dict[str, object] = {"ecds_monthly": selected_ecds}
+    if selected_ecds:
+        latest_ecds = selected_ecds[max(selected_ecds)]
+        assets["ecds_activity"] = latest_ecds["activity"]
+        assets["ecds_performance"] = latest_ecds["performance"]
     assets["publication_page"] = annual_pages[0]
     assets["acute_provider_timeseries"] = acute_timeseries
     return {period: monthly[period] for period in selected_months}, assets
@@ -444,16 +451,36 @@ def build() -> dict:
         provider["footprint_over12_pct"] = footprint.get("footprint_over12_pct")
 
     provider_latest = {provider["code"]: provider for provider in latest_month["providers"]}
-    sites = []
-    if assets.get("ecds_activity") and assets.get("ecds_performance"):
-        print("Downloading ECDS activity and performance workbooks")
-        sites = process_ecds(
-            get(client, assets["ecds_activity"]).content,
-            get(client, assets["ecds_performance"]).content,
+    site_snapshots: dict[str, list[dict]] = {}
+    ecds_months = assets.get("ecds_monthly", {})
+    if isinstance(ecds_months, dict):
+        for period, pair in sorted(ecds_months.items()):
+            print(f"Downloading ECDS site data: {period}")
+            site_snapshots[period] = process_ecds(
+                get(client, pair["activity"]).content,
+                get(client, pair["performance"]).content,
+            )
+
+    sites = site_snapshots[max(site_snapshots)] if site_snapshots else []
+    for site in sites:
+        site["region"] = provider_latest.get(site["provider_code"], {}).get(
+            "region", "Not mapped"
         )
-        for site in sites:
-            site["region"] = provider_latest.get(site["provider_code"], {}).get(
-                "region", "Not mapped"
+
+    site_trends: dict[str, list[dict]] = defaultdict(list)
+    for period, period_sites in sorted(site_snapshots.items()):
+        for site in period_sites:
+            if site["type12_attendances"] <= 0:
+                continue
+            site_trends[site["code"]].append(
+                {
+                    "period": period,
+                    "type12_attendances": site["type12_attendances"],
+                    "type12_within4_pct": site["type12_within4_pct"],
+                    "type12_over12": site["type12_over12"],
+                    "type12_over12_pct": site["type12_over12_pct"],
+                    "paediatric_type12_within4_pct": site["paediatric_type12_within4_pct"],
+                }
             )
 
     provider_trends: dict[str, list[dict]] = defaultdict(list)
@@ -489,6 +516,7 @@ def build() -> dict:
         "providers": latest_month["providers"],
         "provider_trends": provider_trends,
         "sites": sites,
+        "site_trends": site_trends,
         "definitions": {
             "type1": "Major 24-hour consultant-led emergency department.",
             "utc": "Other A&E Department activity, including Type 3 urgent treatment services.",

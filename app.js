@@ -6,8 +6,10 @@ const state = {
   search: "",
   region: "",
   visibleRows: [],
+  comparisonMode: "trust",
   comparisonMetric: "type1_within4_pct",
   comparisonTrusts: ["", "", ""],
+  comparisonSites: ["", "", ""],
 };
 const fmtInt = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
 const fmtCompact = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 });
@@ -18,6 +20,13 @@ const comparisonMetrics = {
   provider_combined_within4_pct: { label: "Provider combined within four hours", format: pct, percent: true },
   type1_attendances: { label: "Type 1 attendances", format: integer, percent: false },
   utc_attendances: { label: "UTC / Other A&E attendances", format: integer, percent: false },
+};
+const siteComparisonMetrics = {
+  type12_within4_pct: { label: "Type 1/2 ED within four hours", format: pct, percent: true },
+  type12_over12_pct: { label: "Type 1/2 ED over 12 hours from arrival", format: pct, percent: true },
+  type12_attendances: { label: "Type 1/2 ED attendances", format: integer, percent: false },
+  type12_over12: { label: "Type 1/2 ED attendances over 12 hours", format: integer, percent: false },
+  paediatric_type12_within4_pct: { label: "Paediatric Type 1/2 within four hours", format: pct, percent: true },
 };
 
 function pct(value) {
@@ -211,8 +220,16 @@ function comparisonProviderOptions(selectedCode) {
     .join("");
 }
 
-function comparisonChart(series, periods, metricKey) {
-  const metricDefinition = comparisonMetrics[metricKey];
+function comparisonSiteOptions(selectedCode) {
+  return state.data.sites
+    .filter((site) => site.type12_attendances > 0 && state.data.site_trends?.[site.code]?.length)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((site) => `<option value="${safe(site.code)}" ${site.code === selectedCode ? "selected" : ""}>${safe(site.name)} — ${safe(site.provider_name)}</option>`)
+    .join("");
+}
+
+function comparisonChart(series, periods, metricKey, metricDefinitions) {
+  const metricDefinition = metricDefinitions[metricKey];
   const width = 960;
   const height = 350;
   const pad = { top: 22, right: 24, bottom: 48, left: 66 };
@@ -249,7 +266,7 @@ function comparisonChart(series, periods, metricKey) {
       ${valid.map((point) => `<circle class="comparison-dot" fill="${colour}" cx="${x(point.period)}" cy="${y(Number(point[metricKey]))}" r="4" tabindex="0"><title>${safe(item.name)} — ${monthLabel(point.period)}: ${metricDefinition.format(point[metricKey])}</title></circle>`).join("")}`;
   }).join("");
 
-  return `<div class="comparison-chart-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${safe(metricDefinition.label)} comparison over 12 months">
+  return `<div class="comparison-chart-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${safe(metricDefinition.label)} monthly comparison">
     ${yTicks.map((tick) => `<line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y(tick)}" y2="${y(tick)}" />`).join("")}
     ${yTicks.map((tick) => `<text class="axis-text" x="${pad.left - 9}" y="${y(tick) + 4}" text-anchor="end">${safe(axisLabel(tick))}</text>`).join("")}
     ${xIndexes.map((index) => `<text class="axis-text" x="${x(periods[index])}" y="${height - 14}" text-anchor="middle">${safe(monthLabel(periods[index], true))}</text>`).join("")}
@@ -258,17 +275,33 @@ function comparisonChart(series, periods, metricKey) {
 }
 
 function comparisonView() {
-  const periods = state.data.national_trend.slice(-12).map((point) => point.period);
-  const metricDefinition = comparisonMetrics[state.comparisonMetric];
-  const selectedCodes = [...new Set(state.comparisonTrusts.filter(Boolean))];
+  const siteMode = state.comparisonMode === "site";
+  const metricDefinitions = siteMode ? siteComparisonMetrics : comparisonMetrics;
+  if (!metricDefinitions[state.comparisonMetric]) {
+    state.comparisonMetric = siteMode ? "type12_within4_pct" : "type1_within4_pct";
+  }
+  const metricDefinition = metricDefinitions[state.comparisonMetric];
+  const allSitePeriods = [...new Set(Object.values(state.data.site_trends || {})
+    .flatMap((points) => points.map((point) => point.period)))].sort().slice(-12);
+  const periods = siteMode
+    ? allSitePeriods
+    : state.data.national_trend.slice(-12).map((point) => point.period);
+  const selections = siteMode ? state.comparisonSites : state.comparisonTrusts;
+  const selectedCodes = [...new Set(selections.filter(Boolean))];
   const providerByCode = Object.fromEntries(state.data.providers.map((provider) => [provider.code, provider]));
-  const series = [
-    { name: "England", points: state.data.national_trend.filter((point) => periods.includes(point.period)) },
-    ...selectedCodes.map((code) => ({
-      name: providerByCode[code]?.name || code,
-      points: (state.data.provider_trends[code] || []).filter((point) => periods.includes(point.period)),
-    })),
-  ];
+  const siteByCode = Object.fromEntries(state.data.sites.map((site) => [site.code, site]));
+  const series = siteMode
+    ? selectedCodes.map((code) => ({
+      name: siteByCode[code]?.name || code,
+      points: (state.data.site_trends?.[code] || []).filter((point) => periods.includes(point.period)),
+    }))
+    : [
+      { name: "England", points: state.data.national_trend.filter((point) => periods.includes(point.period)) },
+      ...selectedCodes.map((code) => ({
+        name: providerByCode[code]?.name || code,
+        points: (state.data.provider_trends[code] || []).filter((point) => periods.includes(point.period)),
+      })),
+    ];
 
   state.visibleRows = periods.map((period) => {
     const row = { Month: monthLabel(period) };
@@ -280,38 +313,47 @@ function comparisonView() {
   });
 
   const tableHeaders = ["Month", ...series.map((item) => item.name)];
-  const selectors = state.comparisonTrusts.map((code, index) => `
-    <label><span>Trust ${index + 1}</span><select class="comparison-trust" data-slot="${index}">
-      <option value="">Select a trust</option>
-      ${comparisonProviderOptions(code)}
+  const selectors = selections.map((code, index) => `
+    <label><span>${siteMode ? "ED site" : "Trust"} ${index + 1}</span><select class="${siteMode ? "comparison-site" : "comparison-trust"}" data-slot="${index}">
+      <option value="">Select ${siteMode ? "an ED site" : "a trust"}</option>
+      ${siteMode ? comparisonSiteOptions(code) : comparisonProviderOptions(code)}
     </select></label>`).join("");
-  const metricOptions = Object.entries(comparisonMetrics).map(([key, definition]) => (
+  const metricOptions = Object.entries(metricDefinitions).map(([key, definition]) => (
     `<option value="${key}" ${key === state.comparisonMetric ? "selected" : ""}>${safe(definition.label)}</option>`
   )).join("");
 
   return `<div class="comparison-view">
     <div class="comparison-intro">
-      <div><p class="section-kicker">Historical performance</p><h3>Compare monthly trust results</h3></div>
-      <p>Choose up to three trusts. England is retained as a reference. The most recent 12 published months are shown.</p>
+      <div><p class="section-kicker">Historical performance</p><h3>Compare monthly ${siteMode ? "ED-site" : "trust"} results</h3></div>
+      <p>${siteMode ? `Choose up to three individual Type 1/2 ED sites. ${periods.length} comparable published month${periods.length === 1 ? " is" : "s are"} currently available, up to a maximum of 12.` : "Choose up to three trusts. England is retained as a reference. The most recent 12 published months are shown."}</p>
     </div>
     <div class="comparison-controls">
+      <label><span>Compare</span><select id="comparisonMode">
+        <option value="trust" ${siteMode ? "" : "selected"}>Trusts</option>
+        <option value="site" ${siteMode ? "selected" : ""}>Individual ED sites</option>
+      </select></label>
       <label><span>Measure</span><select id="comparisonMetric">${metricOptions}</select></label>
       ${selectors}
     </div>
     <div class="comparison-legend">
       ${series.map((item, index) => `<span><i style="background:${comparisonColours[index % comparisonColours.length]}"></i>${safe(item.name)}</span>`).join("")}
     </div>
-    <div class="comparison-chart">${comparisonChart(series, periods, state.comparisonMetric)}</div>
-    ${selectedCodes.length ? "" : '<p class="comparison-hint">Select a trust above to add it to the England trend.</p>'}
+    <div class="comparison-chart">${comparisonChart(series, periods, state.comparisonMetric, metricDefinitions)}</div>
+    ${selectedCodes.length ? "" : `<p class="comparison-hint">Select ${siteMode ? "an ED site" : "a trust"} above to add it to the comparison.</p>`}
     <div class="comparison-table-wrap"><table class="comparison-table">
       <thead><tr>${tableHeaders.map((heading) => `<th>${safe(heading)}</th>`).join("")}</tr></thead>
       <tbody>${state.visibleRows.map((row) => `<tr>${tableHeaders.map((heading) => `<td>${safe(row[heading])}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
-    <p class="comparison-note">Provider-reported Type 1, UTC and combined measures are shown consistently across the selected period. The official acute trust-footprint methodology changed from April 2026 and is therefore not used in this historical comparison.</p>
+    <p class="comparison-note">${siteMode ? "Site-level figures use NHS England's ECDS supplementary analysis. Comparable site reporting begins with the newer 2025 publication format; 12-hour-from-arrival measures apply to Type 1/2 attendances and not UTC-only sites." : "Provider-reported Type 1, UTC and combined measures are shown consistently across the selected period. The official acute trust-footprint methodology changed from April 2026 and is therefore not used in this historical comparison."}</p>
   </div>`;
 }
 
 function bindComparisonControls() {
+  document.getElementById("comparisonMode").addEventListener("change", (event) => {
+    state.comparisonMode = event.target.value;
+    state.comparisonMetric = state.comparisonMode === "site" ? "type12_within4_pct" : "type1_within4_pct";
+    renderExplorer();
+  });
   document.getElementById("comparisonMetric").addEventListener("change", (event) => {
     state.comparisonMetric = event.target.value;
     renderExplorer();
@@ -319,6 +361,12 @@ function bindComparisonControls() {
   document.querySelectorAll(".comparison-trust").forEach((select) => {
     select.addEventListener("change", (event) => {
       state.comparisonTrusts[Number(event.target.dataset.slot)] = event.target.value;
+      renderExplorer();
+    });
+  });
+  document.querySelectorAll(".comparison-site").forEach((select) => {
+    select.addEventListener("change", (event) => {
+      state.comparisonSites[Number(event.target.dataset.slot)] = event.target.value;
       renderExplorer();
     });
   });
