@@ -1,4 +1,4 @@
-const DATA_URL = "data/dashboard.json";
+const DATA_URL = "dashboard.json";
 
 const state = { data: null, view: "trusts", search: "", region: "", visibleRows: [] };
 const fmtInt = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 });
