@@ -259,3 +259,27 @@ tbody tr.highlight { background: rgba(0, 169, 206, 0.09); }
   .comparison-intro > p { text-align: left; }
   .comparison-controls { grid-template-columns: 1fr; }
 }
+
+/* Rankings */
+.table-container.ranking-mode { overflow: visible; }
+.ranking-view { padding: 20px; }
+.ranking-view h3 { margin: 0; font-size: 1.3rem; }
+.ranking-intro, .ranking-context, .ranking-note { color: var(--muted); font-size: .86rem; }
+.ranking-controls { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.ranking-controls label { display: grid; gap: 6px; font-size: .8rem; font-weight: 700; }
+.ranking-controls select { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+.ranking-leaders { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.ranking-card { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.ranking-position { color: var(--blue-dark); font-weight: 800; }
+.ranking-card h4 { margin: 10px 0 14px; font-size: .9rem; }
+.ranking-card strong { color: var(--blue-dark); font-size: 1.8rem; }
+.ranking-card p { font-size: .75rem; color: var(--muted); margin-bottom: 0; }
+.ranking-local { border-color: var(--cyan); }
+.ranking-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.ranking-note a { color: var(--blue-dark); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (max-width: 640px) {
+  .ranking-view { padding: 12px; }
+  .ranking-controls, .ranking-controls label { width: 100%; }
+  .ranking-leaders { grid-template-columns: 1fr; }
+}

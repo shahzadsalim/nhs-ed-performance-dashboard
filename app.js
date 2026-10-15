@@ -2,7 +2,9 @@ const DATA_URL = "dashboard.json";
 
 const state = {
   data: null,
-  view: "trusts",
+  view: "rankings",
+  rankingScope: "north-west",
+  rankingTop: 5,
   search: "",
   region: "",
   visibleRows: [],
@@ -372,6 +374,50 @@ function bindComparisonControls() {
   });
 }
 
+// NHS England North West trust directory, checked 15 October 2026.
+// Explicit Type 1 provider membership avoids ambiguous source regional labels.
+const cheshireMerseysideCodes = new Set(["RBS", "RJN", "RBT", "REM", "RBN", "RJR", "RWW", "RBL"]);
+const northWestCodes = new Set([...cheshireMerseysideCodes, "RTX", "RXL", "R0A", "RMP", "RWJ", "RXR", "RM3", "RRF", "RMC", "RXN"]);
+const rankingScopes = { "england": "England", "north-west": "North West", "cheshire-merseyside": "Cheshire and Merseyside" };
+
+function rankedProviders(providers, scope) {
+  const membership = scope === "cheshire-merseyside" ? cheshireMerseysideCodes : scope === "north-west" ? northWestCodes : null;
+  const rows = providers.filter(row => row.type1_attendances > 0 &&
+    typeof row.type1_within4_pct === "number" && Number.isFinite(row.type1_within4_pct) &&
+    row.type1_within4_pct >= 0 && row.type1_within4_pct <= 100 && (!membership || membership.has(row.code)))
+    .slice().sort((a, b) => b.type1_within4_pct - a.type1_within4_pct || a.name.localeCompare(b.name));
+  let rank = 0;
+  return rows.map((row, index) => {
+    if (index === 0 || row.type1_within4_pct !== rows[index - 1].type1_within4_pct) rank = index + 1;
+    return { ...row, rank };
+  });
+}
+
+function rankingsView() {
+  const rows = rankedProviders(state.data.providers, state.rankingScope);
+  const englandRanks = new Map(rankedProviders(state.data.providers, "england").map(row => [row.code, row.rank]));
+  const leaders = rows.filter(row => row.rank <= state.rankingTop);
+  const area = rankingScopes[state.rankingScope];
+  state.visibleRows = rows.map(row => ({ Rank: row.rank, Trust: row.name, Code: row.code,
+    Area: area, Period: state.data.latest_period, "Type 1 within four hours (%)": row.type1_within4_pct,
+    "Type 1 attendances": row.type1_attendances, "England rank": englandRanks.get(row.code) }));
+  return `<div class="ranking-view">
+    <p class="section-kicker">Monthly Type 1 ED ranking</p>
+    <h3>Four-hour performance · ${safe(state.data.latest_period_display)}</h3>
+    <p class="ranking-intro">Ranked by the percentage of Type 1 major ED attendances completed within four hours. Higher is better.</p>
+    <div class="ranking-controls">
+      <label>Area<select id="rankingScope">${Object.entries(rankingScopes).map(([value, label]) => `<option value="${value}" ${state.rankingScope === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      <label>Highlights<select id="rankingTop"><option value="3" ${state.rankingTop === 3 ? "selected" : ""}>Top three</option><option value="5" ${state.rankingTop === 5 ? "selected" : ""}>Top five</option></select></label>
+    </div>
+    <p class="ranking-context" aria-live="polite">${safe(area)} · ${rows.length} trusts ranked · Latest published month</p>
+    <div class="ranking-leaders">${leaders.map(row => `<article class="ranking-card ${row.code === "RWW" ? "ranking-local" : ""}"><span class="ranking-position">#${row.rank}</span><h4>${safe(row.name)}</h4><strong>${pct(row.type1_within4_pct)}</strong><p>${integer(row.type1_attendances)} Type 1 attendances</p></article>`).join("") || "<p>No comparable Type 1 results are available for this area.</p>"}</div>
+    <h4>Full ranking · ${safe(area)}</h4>
+    <div class="ranking-table-wrap"><table><caption class="sr-only">${safe(area)} Type 1 four-hour ranking for ${safe(state.data.latest_period_display)}</caption><thead><tr><th scope="col">Rank</th><th scope="col">Trust</th><th scope="col">Within four hours</th><th scope="col">Type 1 attendances</th><th scope="col">England rank</th></tr></thead><tbody>${rows.map(row => `<tr class="${row.code === "RWW" ? "highlight" : ""}"><td>${row.rank}</td><td class="name-cell">${safe(row.name)}<span class="subtext">${safe(row.code)}${row.code === "RBS" ? " · Specialist children's trust" : ""}</span></td><td class="metric primary">${pct(row.type1_within4_pct)}</td><td>${integer(row.type1_attendances)}</td><td>${englandRanks.get(row.code)}</td></tr>`).join("")}</tbody></table></div>
+    <p class="ranking-note">Equal published percentages share a rank; all ties within the top ${state.rankingTop} positions are highlighted. Missing percentages and trusts with no Type 1 attendances are excluded. This measures four-hour performance, not overall quality of care; case mix and specialist children's services differ.</p>
+    <p class="ranking-note">Trust-level results include all of a trust's Type 1 services, including services across area boundaries. North West and Cheshire and Merseyside membership uses provider codes checked against the <a href="https://www.england.nhs.uk/north-west/ccgs-and-trusts/icbs-trusts-in-the-north-west/" target="_blank" rel="noreferrer">NHS England directory</a> and <a href="https://www.cheshireandmerseyside.nhs.uk/your-health/cheshire-and-merseyside-provider-collaborative/" target="_blank" rel="noreferrer">local provider list</a> (October 2026). Membership needs review after trust reorganisations. Rankings refresh when the monthly dashboard data updates.</p>
+  </div>`;
+}
+
 function notesView() {
   const { definitions, sources } = state.data;
   state.visibleRows = [];
@@ -398,6 +444,24 @@ function renderExplorer() {
     notes.hidden = false;
     notes.innerHTML = notesView();
     document.getElementById("downloadButton").hidden = true;
+    return;
+  }
+  table.classList.toggle("ranking-mode", state.view === "rankings");
+  if (state.view === "rankings") {
+    controls.hidden = true;
+    table.hidden = false;
+    table.classList.remove("comparison-mode");
+    notes.hidden = true;
+    document.getElementById("downloadButton").hidden = false;
+    table.innerHTML = rankingsView();
+    document.getElementById("rankingScope").addEventListener("change", event => {
+      state.rankingScope = event.target.value;
+      renderExplorer();
+    });
+    document.getElementById("rankingTop").addEventListener("change", event => {
+      state.rankingTop = Number(event.target.value);
+      renderExplorer();
+    });
     return;
   }
   if (state.view === "trends") {
@@ -427,7 +491,7 @@ function downloadVisibleRows() {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `nhs-ed-dashboard-${state.view}-${state.data.latest_period}.csv`;
+  link.download = `nhs-ed-dashboard-${state.view}${state.view === "rankings" ? `-${state.rankingScope}` : ""}-${state.data.latest_period}.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
 }
