@@ -111,9 +111,48 @@ def parse_period(text: str) -> str | None:
 
 
 def page_links(client: object, url: str) -> list[tuple[str, str]]:
+    """Use the official WordPress content feed, with the normal page as fallback.
+
+    The publication page can return an HTML access-check page to automated
+    runners with status 200. The public content API supplies the same links
+    without depending on that presentation page.
+    """
+    parsed_url = urlparse(url)
+    candidates: list[tuple[str, str]] = []
+    if parsed_url.netloc == "www.england.nhs.uk" and parsed_url.path.startswith("/statistics/"):
+        slug = parsed_url.path.rstrip("/").rsplit("/", 1)[-1]
+        api_url = "https://www.england.nhs.uk/statistics/wp-json/wp/v2/pages?" + urlencode(
+            {"slug": slug, "_fields": "link,content", "per_page": 20}
+        )
+        try:
+            pages = json.loads(get(client, api_url).text)
+            if not isinstance(pages, list):
+                raise ValueError("Expected a list of public pages")
+            for page in pages:
+                if not isinstance(page, dict):
+                    continue
+                canonical = page.get("link", "")
+                if canonical.rstrip("/") != url.rstrip("/"):
+                    continue
+                parser = LinkParser()
+                parser.feed(page.get("content", {}).get("rendered", ""))
+                candidates = [(text, urljoin(url, href)) for text, href in parser.links]
+                if candidates:
+                    print(f"Publication links: {url} - {len(candidates)} via official content API")
+                    return candidates
+        except (HTTPError, URLError, OSError, ValueError, TypeError) as exc:
+            print(f"Warning: content API unavailable for {url}: {exc}", file=sys.stderr)
+
+    html = get(client, url).text
     parser = LinkParser()
-    parser.feed(get(client, url).text)
-    return [(text, urljoin(url, href)) for text, href in parser.links]
+    parser.feed(html)
+    candidates = [(text, urljoin(url, href)) for text, href in parser.links]
+    print(f"Publication links: {url} - {len(candidates)} via HTML page")
+    if not candidates:
+        title = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+        label = " ".join(title.group(1).split())[:160] if title else "no page title"
+        print(f"Warning: no links in response ({len(html)} characters; {label})", file=sys.stderr)
+    return candidates
 
 
 def collect_publication_links(
